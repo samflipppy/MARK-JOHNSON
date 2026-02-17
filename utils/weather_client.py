@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
+from datetime import datetime, timedelta
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import aiohttp
 
@@ -12,6 +15,10 @@ logger = logging.getLogger("mark_johnson.weather")
 
 # NWS grid URL cache: (lat, lon) → forecast grid data URL
 _nws_grid_cache: dict[tuple[float, float], str] = {}
+
+# Duration parsing for NWS validTime (e.g. "PT14H", "P1D")
+_DURATION_H_RE = re.compile(r"(\d+)H")
+_DURATION_D_RE = re.compile(r"(\d+)D")
 
 
 class OpenMeteoClient:
@@ -43,16 +50,16 @@ class OpenMeteoClient:
         return cls._semaphore
 
     async def get_ensemble_forecast(
-        self, lat: float, lon: float
-    ) -> dict[str, list[float]]:
+        self, lat: float, lon: float, timezone: str = "UTC"
+    ) -> dict[str, dict[str, list[float]]]:
         """
         Fetch ensemble forecast members for the given location.
 
-        Returns dict mapping model name → list of temperature values (°F)
-        for today's max and min temps across all ensemble members.
+        Returns dict mapping date_str → {model_key: [values], "max_members": [...],
+        "min_members": [...]} for each forecast day.
 
-        Uses a semaphore to limit concurrent requests (Open-Meteo 429s if
-        too many requests hit simultaneously).
+        The timezone parameter ensures daily aggregation aligns with the local
+        calendar day (critical for correct daily max/min).
         """
         sem = self._get_semaphore()
         async with sem:
@@ -63,7 +70,8 @@ class OpenMeteoClient:
                 "daily": "temperature_2m_max,temperature_2m_min",
                 "temperature_unit": "fahrenheit",
                 "models": "icon_seamless,gfs_seamless,ecmwf_ifs025,gem_global,meteofrance_seamless",
-                "forecast_days": 1,
+                "forecast_days": config.FORECAST_DAYS,
+                "timezone": timezone,
             }
 
             backoff = 1.0
@@ -84,12 +92,13 @@ class OpenMeteoClient:
                         resp.raise_for_status()
                         data = await resp.json()
                         result = self._parse_ensemble_response(data)
-                        n_max = len(result.get("max_members", []))
-                        n_min = len(result.get("min_members", []))
-                        logger.info(
-                            "Open-Meteo OK (%.2f, %.2f): %d max members, %d min members",
-                            lat, lon, n_max, n_min,
-                        )
+                        for date_str, day_data in result.items():
+                            n_max = len(day_data.get("max_members", []))
+                            n_min = len(day_data.get("min_members", []))
+                            logger.info(
+                                "Open-Meteo OK (%.2f, %.2f) [%s]: %d max members, %d min members",
+                                lat, lon, date_str, n_max, n_min,
+                            )
                         return result
                 except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
                     if attempt == 3:
@@ -105,55 +114,51 @@ class OpenMeteoClient:
         return {}
 
     @staticmethod
-    def _parse_ensemble_response(data: dict[str, Any]) -> dict[str, list[float]]:
+    def _parse_ensemble_response(
+        data: dict[str, Any],
+    ) -> dict[str, dict[str, list[float]]]:
         """
-        Parse the Open-Meteo ensemble JSON into {model_name: [temp_values]}.
+        Parse the Open-Meteo ensemble JSON into per-day member data.
 
-        The API returns data per model, each with multiple ensemble members.
-        The daily key contains arrays of values per member for each day.
+        Returns {date_str: {"max_members": [...], "min_members": [...], ...}}.
+        Each date has aggregated member values from all ensemble models.
         """
-        result: dict[str, list[float]] = {}
-
-        # The response nests data under each model name
-        # Two possible structures: flat daily or per-model
         daily = data.get("daily", {})
-
         if not daily:
-            return result
+            return {}
 
-        # Open-Meteo ensemble returns member data like:
-        # "daily": { "temperature_2m_max_member0": [...], "temperature_2m_max_member1": [...], ... }
-        # or under model-specific keys.
-        # Collect all temperature max/min values from all member keys.
-        for key, values in daily.items():
-            if not isinstance(values, list):
-                continue
-            if "temperature_2m_max" in key:
-                model_key = key.replace("temperature_2m_max", "max").strip("_")
-                if not model_key:
-                    model_key = "max_default"
-                vals = [v for v in values if v is not None]
-                if vals:
-                    result.setdefault("max_members", []).extend(vals)
-                    result[f"max_{model_key}"] = vals
-            elif "temperature_2m_min" in key:
-                model_key = key.replace("temperature_2m_min", "min").strip("_")
-                if not model_key:
-                    model_key = "min_default"
-                vals = [v for v in values if v is not None]
-                if vals:
-                    result.setdefault("min_members", []).extend(vals)
-                    result[f"min_{model_key}"] = vals
+        dates = daily.get("time", [])
+        if not dates:
+            return {}
 
-        # If the response is a simple array (single model, no member suffix)
-        for field_name in ("temperature_2m_max", "temperature_2m_min"):
-            if field_name in daily:
-                vals = daily[field_name]
-                if isinstance(vals, list):
-                    clean = [v for v in vals if v is not None]
-                    if clean:
-                        bucket = "max_members" if "max" in field_name else "min_members"
-                        result.setdefault(bucket, []).extend(clean)
+        result: dict[str, dict[str, list[float]]] = {}
+
+        for day_idx, date_str in enumerate(dates):
+            day_data: dict[str, list[float]] = {}
+
+            for key, values in daily.items():
+                if key == "time" or not isinstance(values, list):
+                    continue
+                if day_idx >= len(values) or values[day_idx] is None:
+                    continue
+
+                val = float(values[day_idx])
+
+                if "temperature_2m_max" in key:
+                    model_key = key.replace("temperature_2m_max", "max").strip("_")
+                    if not model_key:
+                        model_key = "max_default"
+                    day_data.setdefault("max_members", []).append(val)
+                    day_data[f"max_{model_key}"] = [val]
+                elif "temperature_2m_min" in key:
+                    model_key = key.replace("temperature_2m_min", "min").strip("_")
+                    if not model_key:
+                        model_key = "min_default"
+                    day_data.setdefault("min_members", []).append(val)
+                    day_data[f"min_{model_key}"] = [val]
+
+            if day_data:
+                result[date_str] = day_data
 
         return result
 
@@ -205,16 +210,17 @@ class NWSClient:
         return grid_url
 
     async def get_forecast(
-        self, lat: float, lon: float
-    ) -> dict[str, float | None]:
+        self, lat: float, lon: float, timezone: str = "UTC"
+    ) -> dict[str, dict[str, float | None]]:
         """
-        Fetch the NWS grid forecast and extract today's max/min temps.
+        Fetch the NWS grid forecast and extract max/min temps keyed by local date.
 
-        Returns {"max_temp_f": float|None, "min_temp_f": float|None}.
+        Returns {date_str: {"max_temp_f": float|None, "min_temp_f": float|None}}.
+        The timezone is used to convert NWS validTime periods to local dates.
         """
         grid_url = await self._get_grid_url(lat, lon)
         if not grid_url:
-            return {"max_temp_f": None, "min_temp_f": None}
+            return {}
 
         session = await self._ensure_session()
 
@@ -222,34 +228,89 @@ class NWSClient:
             async with session.get(grid_url) as resp:
                 if resp.status != 200:
                     logger.warning("NWS grid request failed: %d", resp.status)
-                    return {"max_temp_f": None, "min_temp_f": None}
+                    return {}
                 data = await resp.json()
         except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
             logger.error("NWS grid request error: %s", exc)
-            return {"max_temp_f": None, "min_temp_f": None}
+            return {}
 
         props = data.get("properties", {})
-        max_temp = self._extract_first_value(props.get("maxTemperature", {}))
-        min_temp = self._extract_first_value(props.get("minTemperature", {}))
+        local_tz = ZoneInfo(timezone)
 
-        # NWS grid data is in Celsius — convert to Fahrenheit
-        max_f = (max_temp * 9 / 5 + 32) if max_temp is not None else None
-        min_f = (min_temp * 9 / 5 + 32) if min_temp is not None else None
-
-        logger.info(
-            "NWS OK (%.2f, %.2f): high=%.1f°F low=%.1f°F",
-            lat, lon,
-            max_f if max_f is not None else float("nan"),
-            min_f if min_f is not None else float("nan"),
+        max_by_date = self._extract_values_by_date(
+            props.get("maxTemperature", {}), local_tz
         )
-        return {"max_temp_f": max_f, "min_temp_f": min_f}
+        min_by_date = self._extract_values_by_date(
+            props.get("minTemperature", {}), local_tz
+        )
+
+        # Merge into {date: {max_temp_f, min_temp_f}}
+        all_dates = set(max_by_date.keys()) | set(min_by_date.keys())
+        result: dict[str, dict[str, float | None]] = {}
+        for date_str in sorted(all_dates):
+            max_c = max_by_date.get(date_str)
+            min_c = min_by_date.get(date_str)
+            max_f = (max_c * 9 / 5 + 32) if max_c is not None else None
+            min_f = (min_c * 9 / 5 + 32) if min_c is not None else None
+            result[date_str] = {"max_temp_f": max_f, "min_temp_f": min_f}
+
+        # Log first date for backward-compat visibility
+        for date_str, temps in sorted(result.items()):
+            max_f = temps.get("max_temp_f")
+            min_f = temps.get("min_temp_f")
+            logger.info(
+                "NWS OK (%.2f, %.2f) [%s]: high=%.1f°F low=%.1f°F",
+                lat, lon, date_str,
+                max_f if max_f is not None else float("nan"),
+                min_f if min_f is not None else float("nan"),
+            )
+
+        return result
 
     @staticmethod
-    def _extract_first_value(field: dict[str, Any]) -> float | None:
-        """Extract the first numeric value from an NWS gridded data field."""
-        values = field.get("values", [])
-        if values and isinstance(values, list):
-            val = values[0].get("value")
-            if val is not None:
-                return float(val)
-        return None
+    def _extract_values_by_date(
+        field: dict[str, Any], local_tz: ZoneInfo
+    ) -> dict[str, float]:
+        """
+        Extract {local_date_str: value_celsius} from an NWS grid data field.
+
+        Uses the midpoint of each validTime period converted to the local timezone
+        to determine which calendar date the value belongs to.
+        """
+        result: dict[str, float] = {}
+        for entry in field.get("values", []):
+            val = entry.get("value")
+            valid_time = entry.get("validTime", "")
+            if val is None or not valid_time:
+                continue
+
+            try:
+                # Parse "2026-02-17T08:00:00+00:00/PT14H"
+                parts = valid_time.split("/")
+                time_str = parts[0]
+                dt_utc = datetime.fromisoformat(time_str.replace("Z", "+00:00"))
+
+                # Compute midpoint of the period for accurate date assignment
+                duration_hours = 12.0  # default
+                if len(parts) > 1:
+                    dur = parts[1]
+                    h_match = _DURATION_H_RE.search(dur)
+                    d_match = _DURATION_D_RE.search(dur)
+                    hours = 0.0
+                    if d_match:
+                        hours += int(d_match.group(1)) * 24
+                    if h_match:
+                        hours += int(h_match.group(1))
+                    if hours > 0:
+                        duration_hours = hours
+
+                midpoint = dt_utc + timedelta(hours=duration_hours / 2)
+                local_date = midpoint.astimezone(local_tz).date().isoformat()
+
+                # Keep only the first (most recent) value per date
+                if local_date not in result:
+                    result[local_date] = float(val)
+            except (ValueError, IndexError, OverflowError):
+                continue
+
+        return result

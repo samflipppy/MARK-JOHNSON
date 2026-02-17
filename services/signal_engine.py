@@ -24,7 +24,7 @@ class SignalEngine:
     async def scan_for_signals(
         self,
         markets: list[Market],
-        distributions: dict[tuple[str, str], TemperatureDistribution],
+        distributions: dict[tuple[str, str, str], TemperatureDistribution],
     ) -> list[Signal]:
         """Compare each market against the forecast distribution and return signals."""
         signals: list[Signal] = []
@@ -33,8 +33,9 @@ class SignalEngine:
         for market in markets:
             seen_tickers.add(market.ticker)
 
-            # Look up matching distribution
-            dist = distributions.get((market.city, market.market_type))
+            # Look up matching distribution by (city, type, date)
+            date_str = market.market_date.isoformat() if market.market_date else ""
+            dist = distributions.get((market.city, market.market_type, date_str))
             if dist is None:
                 continue
 

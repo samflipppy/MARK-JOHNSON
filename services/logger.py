@@ -47,6 +47,7 @@ def log_forecast(
     record = {
         "timestamp": ts.isoformat(),
         "city": city,
+        "forecast_date": distribution.forecast_date.isoformat() if distribution.forecast_date else None,
         "mean": distribution.mean,
         "std": distribution.std,
         "confidence": distribution.confidence,
@@ -73,6 +74,7 @@ def log_market_snapshot(
                 "ticker": m.ticker,
                 "city": m.city,
                 "type": m.market_type,
+                "market_date": m.market_date.isoformat() if m.market_date else None,
                 "band_min": m.band_min,
                 "band_max": m.band_max,
                 "implied_prob": round(m.implied_prob, 4),
@@ -99,6 +101,7 @@ def log_signal(
         "ticker": signal.market.ticker,
         "city": signal.market.city,
         "market_type": signal.market.market_type,
+        "market_date": signal.market.market_date.isoformat() if signal.market.market_date else None,
         "band": signal.market.band_label,
         "implied_prob": round(signal.market.implied_prob, 4),
         "model_prob": round(signal.model_prob, 4),
