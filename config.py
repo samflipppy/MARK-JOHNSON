@@ -5,6 +5,8 @@ load_dotenv()
 
 # ── Kalshi ────────────────────────────────────────────────────────────────────
 KALSHI_BASE_URL = "https://api.elections.kalshi.com/trade-api/v2"
+KALSHI_API_KEY_ID = os.getenv("KALSHI_API_KEY", "")  # API key ID from Kalshi dashboard
+KALSHI_PRIVATE_KEY_PEM = os.getenv("KALSHI_PRIVATE_KEY", "")  # RSA private key (PEM format)
 MARKET_POLL_INTERVAL_SECONDS = 180  # 3 minutes
 MARKET_SERIES_KEYWORDS = [
     "temperature",
