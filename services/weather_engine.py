@@ -133,8 +133,8 @@ class WeatherEngine:
             sources=sources,
         )
 
-        logger.debug(
-            "%s %s: mean=%.1f°F std=%.1f°F (%d members, confidence=%s)",
+        logger.info(
+            "%s %s: mean=%.1f°F ±%.1f°F (%d members, confidence=%s)",
             city_key,
             market_type,
             dist.mean,

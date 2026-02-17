@@ -170,14 +170,20 @@ class KalshiClient:
                     params={"status": "open", "series_ticker": series, "limit": 200},
                 )
                 markets = data.get("markets", [])
+                new_count = 0
                 for mkt in markets:
                     t = mkt.get("ticker")
                     if t and t not in seen_tickers:
                         all_markets.append(mkt)
                         seen_tickers.add(t)
+                        new_count += 1
+                if new_count > 0:
+                    logger.info("  %s: %d markets", series, new_count)
+                else:
+                    logger.debug("  %s: 0 markets (no open contracts)", series)
             except Exception as exc:
                 # Log but continue — one failed series shouldn't block others
-                logger.debug("Series %s query failed: %s", series, exc)
+                logger.warning("  %s: query failed — %s", series, exc)
 
             # Stagger requests: brief pause every 10 requests
             if (i + 1) % 10 == 0:

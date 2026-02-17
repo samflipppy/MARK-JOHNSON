@@ -83,7 +83,14 @@ class OpenMeteoClient:
                             continue
                         resp.raise_for_status()
                         data = await resp.json()
-                        return self._parse_ensemble_response(data)
+                        result = self._parse_ensemble_response(data)
+                        n_max = len(result.get("max_members", []))
+                        n_min = len(result.get("min_members", []))
+                        logger.info(
+                            "Open-Meteo OK (%.2f, %.2f): %d max members, %d min members",
+                            lat, lon, n_max, n_min,
+                        )
+                        return result
                 except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
                     if attempt == 3:
                         logger.error("Open-Meteo request failed after retries: %s", exc)
@@ -229,6 +236,12 @@ class NWSClient:
         max_f = (max_temp * 9 / 5 + 32) if max_temp is not None else None
         min_f = (min_temp * 9 / 5 + 32) if min_temp is not None else None
 
+        logger.info(
+            "NWS OK (%.2f, %.2f): high=%.1f°F low=%.1f°F",
+            lat, lon,
+            max_f if max_f is not None else float("nan"),
+            min_f if min_f is not None else float("nan"),
+        )
         return {"max_temp_f": max_f, "min_temp_f": min_f}
 
     @staticmethod
