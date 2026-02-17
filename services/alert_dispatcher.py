@@ -82,6 +82,21 @@ class AlertDispatcher:
                     "inline": True,
                 },
                 {
+                    "name": "Band Position",
+                    "value": signal.band_position.upper(),
+                    "inline": True,
+                },
+                {
+                    "name": "Kelly Size",
+                    "value": f"{signal.kelly_contracts:.1f} contracts" if signal.kelly_contracts > 0 else "SKIP",
+                    "inline": True,
+                },
+                {
+                    "name": "Expected Value",
+                    "value": f"${signal.expected_value:+.3f}/contract",
+                    "inline": True,
+                },
+                {
                     "name": "Volume",
                     "value": f"${market.volume:,.0f}",
                     "inline": True,
@@ -93,7 +108,7 @@ class AlertDispatcher:
                 },
             ],
             "footer": {
-                "text": "MARK JOHNSON v1.0 | Not financial advice | Paper signals only"
+                "text": "MARK JOHNSON v2.0 | Not financial advice | Paper signals only"
             },
             "timestamp": datetime.now(timezone.utc).isoformat(),
         }

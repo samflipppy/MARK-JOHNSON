@@ -34,12 +34,76 @@ OPENMETEO_ENSEMBLE_URL = "https://ensemble-api.open-meteo.com/v1/ensemble"
 NWS_API_BASE = "https://api.weather.gov"
 WEATHER_POLL_INTERVAL_SECONDS = 600  # 10 minutes
 
+# ── METAR surface observations ───────────────────────────────────────────────
+METAR_ENABLED = True  # fetch real-time airport observations for bias correction
+METAR_API_URL = "https://aviationweather.gov/api/data/metar"
+METAR_MAX_AGE_MINUTES = 120  # ignore observations older than 2 hours
+
+# ── Nowcasting / bias correction ─────────────────────────────────────────────
+NOWCAST_CORRECTION_WEIGHT = 0.25  # how aggressively to correct based on current obs error
+NOWCAST_MAX_CORRECTION_F = 5.0  # cap bias correction at ±5°F
+
+# ── Ensemble model weights (higher = more trusted) ──────────────────────────
+# Based on published global model skill: ECMWF >> GFS > ICON > GEM ≈ MeteoFrance
+MODEL_WEIGHTS = {
+    "ecmwf_ifs025": 2.5,   # best global model by far
+    "gfs_seamless": 1.5,   # strong second
+    "icon_seamless": 1.0,  # solid European model
+    "gem_global": 0.7,     # Canadian model
+    "meteofrance_seamless": 0.7,  # MeteoFrance Arpege
+}
+MODEL_WEIGHT_DEFAULT = 0.5  # for unknown model names
+
+# ── Climatological prior (Bayesian anchoring) ───────────────────────────────
+CLIMO_PRIOR_WEIGHT = 0.10  # precision weight for climo prior (0=off, 0.1=light, 0.5=heavy)
+CLIMO_ANOMALY_WARN_SIGMA = 2.5  # log warning if forecast departs >N sigma from climo
+
+# ── EMOS (ensemble spread calibration) ──────────────────────────────────────
+EMOS_INFLATION_FACTOR = 1.2  # multiply raw ensemble spread by this (>1 = inflate)
+EMOS_MAX_INFLATION = 2.0  # cap the inflation factor from bias tracker
+
+# ── MOS bias tracker ────────────────────────────────────────────────────────
+BIAS_TRACKER_ENABLED = True  # persist forecast-vs-actual bias per city/model
+BIAS_MIN_SAMPLES = 3  # minimum verifications before applying bias correction (was 5)
+BIAS_MAX_CORRECTION_F = 3.0  # cap MOS correction at ±3°F
+BIAS_EWMA_ALPHA = 0.25  # EWMA smoothing factor — higher = faster adaptation (was 0.15)
+
+# ── KDE (kernel density estimation) ─────────────────────────────────────────
+USE_KDE = True  # use KDE instead of Gaussian for probability estimates
+KDE_MIN_MEMBERS = 10  # below this, fallback to Gaussian
+KDE_BANDWIDTH_FACTOR = 1.0  # multiplier on Scott's rule (>1 = smoother)
+
 # ── Signal thresholds ─────────────────────────────────────────────────────────
-MIN_EDGE_PERCENT = 8.0  # minimum edge to alert
+MIN_EDGE_PERCENT = 8.0  # minimum edge to alert (base threshold)
 MIN_VOLUME = 5000  # minimum market volume in dollars
 MIN_TIME_TO_CLOSE_MINUTES = 60  # ignore markets closing within this window
 EDGE_PERSIST_COUNT = 2  # edge must persist across N polling cycles
 MAX_ENSEMBLE_SPREAD_F = 4.0  # suppress if ensemble spread exceeds this
+
+# ── Tiered edge thresholds (simulation-driven) ──────────────────────────────
+# Center bands are noisy — require larger edge. Tail bands have real alpha.
+MIN_EDGE_CENTER_PERCENT = 12.0   # center bands (within ±1 band of mode)
+MIN_EDGE_SHOULDER_PERCENT = 10.0  # shoulder bands (±2-3 bands from mode)
+MIN_EDGE_TAIL_PERCENT = 8.0      # tail bands (±4+ bands, "or above/below")
+
+# ── Bid-ask spread filter ────────────────────────────────────────────────────
+# Simulation showed fees destroy marginal edges. Only trade tight books.
+MAX_BID_ASK_SPREAD = 0.07  # skip markets where ask - bid > 7 cents
+
+# ── Confidence-gated thresholds ──────────────────────────────────────────────
+# MEDIUM confidence needs a bigger edge to overcome calibration uncertainty.
+MIN_EDGE_MEDIUM_CONFIDENCE_PERCENT = 12.0  # override for std > 2°F
+MIN_EDGE_LOW_CONFIDENCE_PERCENT = 20.0     # override for std > 8°F (rarely trade)
+
+# ── Nowcast-aware signal boosting ────────────────────────────────────────────
+# When METAR shows the model has been corrected, we have higher conviction.
+# Allow a lower edge threshold when nowcast correction is active.
+NOWCAST_ACTIVE_EDGE_DISCOUNT = 0.75  # multiply edge threshold by this when nowcast active
+
+# ── Kelly criterion position sizing ──────────────────────────────────────────
+KELLY_FRACTION = 0.25  # quarter-Kelly for safety (full Kelly is too aggressive)
+KELLY_MAX_CONTRACTS = 10  # cap position size regardless of edge
+BANKROLL = 500.0  # starting bankroll for Kelly calculation
 
 # ── Alert ─────────────────────────────────────────────────────────────────────
 DISCORD_WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL")

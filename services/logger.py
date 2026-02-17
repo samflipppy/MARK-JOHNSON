@@ -111,5 +111,10 @@ def log_signal(
         "forecast_std": round(signal.forecast_std, 2),
         "confidence": signal.confidence,
         "volume": signal.market.volume,
+        "direction": signal.direction,
+        "band_position": signal.band_position,
+        "effective_threshold": round(signal.effective_threshold, 4),
+        "kelly_contracts": round(signal.kelly_contracts, 2),
+        "expected_value": round(signal.expected_value, 4),
     }
     _append_jsonl("signals", record)

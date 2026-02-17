@@ -17,6 +17,7 @@ import aiohttp
 
 import config
 from services.alert_dispatcher import AlertDispatcher
+from services.bias_tracker import BiasTracker
 from services.logger import log_forecast, log_market_snapshot, log_signal
 from services.market_scanner import MarketScanner
 from services.signal_engine import SignalEngine
@@ -24,7 +25,7 @@ from services.weather_engine import WeatherEngine
 from utils.discord_client import DiscordWebhookClient
 from utils.kalshi_client import KalshiClient
 from utils.kalshi_ws import KalshiWebSocket
-from utils.weather_client import NWSClient, OpenMeteoClient
+from utils.weather_client import METARClient, NWSClient, OpenMeteoClient
 
 # ── Logging setup ─────────────────────────────────────────────────────────────
 logging.basicConfig(
@@ -265,11 +266,13 @@ async def main() -> None:
         kalshi = KalshiClient(session=session)
         openmeteo = OpenMeteoClient(session=session)
         nws = NWSClient(session=session)
+        metar = METARClient(session=session)
         discord = DiscordWebhookClient(session=session)
+        bias_tracker = BiasTracker() if config.BIAS_TRACKER_ENABLED else None
 
         # Initialize services
         scanner = MarketScanner(kalshi)
-        weather = WeatherEngine(openmeteo, nws)
+        weather = WeatherEngine(openmeteo, nws, metar=metar, bias_tracker=bias_tracker)
         signal_engine = SignalEngine()
         dispatcher = AlertDispatcher(discord)
 
