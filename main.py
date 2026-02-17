@@ -41,15 +41,19 @@ _signals_today: list = []
 
 def _print_banner() -> None:
     n_cities = len(config.CITIES)
-    discord_status = "ENABLED" if config.DISCORD_WEBHOOK_URL else "DISABLED (no webhook URL)"
-    banner = f"""
-\u2554\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2557
-\u2551         MARK JOHNSON v1.0            \u2551
-\u2551  Temperature Market Scanner          \u2551
-\u2551  Monitoring {n_cities} cities{' ' * (16 - len(str(n_cities)))}\u2551
-\u2551  Discord alerts: {discord_status:<20s}\u2551
-\u255a\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u255d"""
-    print(banner)
+    discord_status = "ENABLED" if config.DISCORD_WEBHOOK_URL else "DISABLED"
+    W = 40  # inner width
+    lines = [
+        "MARK JOHNSON v1.0".center(W),
+        "Temperature Market Scanner".center(W),
+        f"Monitoring {n_cities} cities".center(W),
+        f"Discord alerts: {discord_status}".center(W),
+    ]
+    print()
+    print("\u2554" + "\u2550" * W + "\u2557")
+    for line in lines:
+        print(f"\u2551{line}\u2551")
+    print("\u255a" + "\u2550" * W + "\u255d")
 
 
 # ── Loop tasks ────────────────────────────────────────────────────────────────

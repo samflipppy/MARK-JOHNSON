@@ -38,8 +38,8 @@ class WeatherEngine:
                 logger.error("Failed to build distribution for %s: %s", city_key, result)
                 continue
             if result:
-                for dist in result:
-                    self.distributions[(dist.city, "high_temp" if "max" in str(dist.sources) else "low_temp")] = dist
+                for market_type, dist in result:
+                    self.distributions[(dist.city, market_type)] = dist
 
         logger.info(
             "Weather engine refreshed — %d distributions available",
@@ -49,7 +49,7 @@ class WeatherEngine:
 
     async def _build_distribution(
         self, city_key: str
-    ) -> list[TemperatureDistribution]:
+    ) -> list[tuple[str, TemperatureDistribution]]:
         """Build high and low temp distributions for a single city."""
         city = config.CITIES[city_key]
         lat, lon = city["lat"], city["lon"]
@@ -68,21 +68,21 @@ class WeatherEngine:
             logger.error("NWS failed for %s: %s", city_key, nws_data)
             nws_data = {}
 
-        distributions: list[TemperatureDistribution] = []
+        distributions: list[tuple[str, TemperatureDistribution]] = []
 
         # Build high-temp distribution
         high_dist = self._fit_distribution(
             city_key, "high_temp", ensemble_data, nws_data, temp_field="max"
         )
         if high_dist:
-            distributions.append(high_dist)
+            distributions.append(("high_temp", high_dist))
 
         # Build low-temp distribution
         low_dist = self._fit_distribution(
             city_key, "low_temp", ensemble_data, nws_data, temp_field="min"
         )
         if low_dist:
-            distributions.append(low_dist)
+            distributions.append(("low_temp", low_dist))
 
         return distributions
 
