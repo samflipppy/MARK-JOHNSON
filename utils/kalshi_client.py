@@ -143,56 +143,51 @@ class KalshiClient:
 
     async def get_open_temperature_markets(self) -> list[dict[str, Any]]:
         """
-        Fetch open temperature markets using series_ticker filters.
+        Fetch open temperature markets using per-city series_ticker filters.
 
-        Instead of paginating through ALL open markets and filtering client-side,
-        we make one targeted request per known temperature series ticker.
-        This reduces API calls from potentially dozens of pages to just 2-3 requests.
+        Kalshi uses city-specific series tickers (e.g. KXHIGHNY for NYC highs,
+        KXLOWTCHI for Chicago lows). We query each known series individually.
+        This is far more efficient than paginating through ALL open markets.
+
+        Requests are staggered to stay well within rate limits (20 req/sec basic).
         """
         all_markets: list[dict[str, Any]] = []
+        seen_tickers: set[str] = set()
 
-        for series in config.KALSHI_TEMPERATURE_SERIES:
-            cursor: str | None = None
-            while True:
-                params: dict[str, Any] = {
-                    "status": "open",
-                    "series_ticker": series,
-                    "limit": 200,
-                }
-                if cursor:
-                    params["cursor"] = cursor
+        # Collect all known series tickers from city config
+        series_tickers: list[str] = []
+        for city_info in config.CITIES.values():
+            for key in ("kalshi_high", "kalshi_low"):
+                st = city_info.get(key)
+                if st:
+                    series_tickers.append(st)
 
-                data = await self._get("/markets", params=params)
+        # Query each series ticker (staggered to avoid rate limits)
+        for i, series in enumerate(series_tickers):
+            try:
+                data = await self._get(
+                    "/markets",
+                    params={"status": "open", "series_ticker": series, "limit": 200},
+                )
                 markets = data.get("markets", [])
-                all_markets.extend(markets)
+                for mkt in markets:
+                    t = mkt.get("ticker")
+                    if t and t not in seen_tickers:
+                        all_markets.append(mkt)
+                        seen_tickers.add(t)
+            except Exception as exc:
+                # Log but continue — one failed series shouldn't block others
+                logger.debug("Series %s query failed: %s", series, exc)
 
-                cursor = data.get("cursor")
-                if not cursor or not markets:
-                    break
+            # Stagger requests: brief pause every 10 requests
+            if (i + 1) % 10 == 0:
+                await asyncio.sleep(0.5)
 
-        # Also do a keyword-based fallback scan (single page only) to catch
-        # any temperature series we don't know about yet.
-        try:
-            data = await self._get("/markets", params={"status": "open", "limit": 200})
-            for mkt in data.get("markets", []):
-                if mkt.get("ticker") in {m["ticker"] for m in all_markets}:
-                    continue  # already have it
-                combined = " ".join([
-                    mkt.get("title", ""),
-                    mkt.get("subtitle", ""),
-                    mkt.get("event_ticker", ""),
-                    mkt.get("series_ticker", ""),
-                ]).lower()
-                if any(kw in combined for kw in config.MARKET_SERIES_KEYWORDS):
-                    all_markets.append(mkt)
-                    # Log unknown series so we can add it to config
-                    st = mkt.get("series_ticker", "")
-                    if st and st not in config.KALSHI_TEMPERATURE_SERIES:
-                        logger.info("Found temperature market in unknown series: %s", st)
-        except Exception:
-            pass  # Fallback is best-effort
-
-        logger.info("Found %d open temperature markets", len(all_markets))
+        logger.info(
+            "Found %d open temperature markets across %d series",
+            len(all_markets),
+            len(series_tickers),
+        )
         return all_markets
 
     async def get_market_details(self, ticker: str) -> dict[str, Any]:

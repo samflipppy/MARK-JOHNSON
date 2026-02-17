@@ -90,11 +90,22 @@ async def market_scan_loop(
 async def kalshi_ws_loop(
     ws: KalshiWebSocket, scanner: MarketScanner
 ) -> None:
-    """Maintain a Kalshi WebSocket connection for real-time price updates."""
+    """Maintain a Kalshi WebSocket connection for real-time price updates.
+
+    If the WebSocket requires auth (401/403), it will disable itself after
+    3 failures and this loop exits cleanly. REST polling continues working.
+    """
     while not _shutdown_event.is_set():
+        if ws.is_disabled:
+            # Auth required — WS not available without API key.
+            # Exit loop; REST polling handles everything.
+            return
+
         connected = await ws.connect()
         if not connected:
-            logger.warning("WebSocket connection failed — retrying in 30s")
+            if ws.is_disabled:
+                return  # permanently disabled
+            # Transient failure — retry after backoff
             try:
                 await asyncio.wait_for(_shutdown_event.wait(), timeout=30.0)
                 break

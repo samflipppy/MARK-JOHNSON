@@ -33,23 +33,51 @@ class KalshiWebSocket:
         self._on_ticker_update = on_ticker_update
         self._subscribed_tickers: set[str] = set()
         self._msg_id = 0
+        self._auth_failures = 0
+        self._disabled = False
 
     def _next_id(self) -> int:
         self._msg_id += 1
         return self._msg_id
 
+    @property
+    def is_disabled(self) -> bool:
+        """True if WS has been disabled due to repeated auth failures."""
+        return self._disabled
+
     async def connect(self) -> bool:
-        """Establish WebSocket connection."""
+        """Establish WebSocket connection. Returns False on auth errors."""
+        if self._disabled:
+            return False
+
         try:
             self._ws = await self._session.ws_connect(
                 KALSHI_WS_URL,
                 heartbeat=30.0,
                 timeout=15.0,
             )
+            self._auth_failures = 0  # reset on success
             logger.info("WebSocket connected to Kalshi")
             return True
         except Exception as exc:
-            logger.error("WebSocket connection failed: %s", exc)
+            exc_str = str(exc)
+            if "401" in exc_str or "403" in exc_str:
+                self._auth_failures += 1
+                if self._auth_failures >= 3:
+                    self._disabled = True
+                    logger.warning(
+                        "WebSocket disabled after %d auth failures — "
+                        "falling back to REST polling only. "
+                        "Set KALSHI_API_KEY to enable real-time updates.",
+                        self._auth_failures,
+                    )
+                    return False
+                logger.warning(
+                    "WebSocket auth rejected (%d/3): %s",
+                    self._auth_failures, exc,
+                )
+            else:
+                logger.error("WebSocket connection failed: %s", exc)
             return False
 
     async def subscribe(self, tickers: list[str]) -> None:

@@ -15,12 +15,11 @@ MARKET_SERIES_KEYWORDS = [
     "lowest temperature",
 ]
 
-# Kalshi series tickers for direct filtering (avoids paginating all markets)
-# These are the known temperature-related series on Kalshi.
-KALSHI_TEMPERATURE_SERIES = [
-    "KXHIGHTEMP",
-    "KXLOWTEMP",
-]
+# Kalshi series tickers are city-specific (not one global series).
+# Discovered from https://kalshi.com/category/climate/daily-temperature
+# Older cities use KXHIGH{city}, newer ones use KXHIGHT{city}.
+# Low temp series all use KXLOWT{city}.
+# We query each series_ticker individually to avoid paginating all markets.
 
 # Rate-limiting for external APIs
 OPENMETEO_MAX_CONCURRENT = 5  # max simultaneous Open-Meteo requests
@@ -46,124 +45,104 @@ ALERT_COOLDOWN_MINUTES = 15  # max 1 alert per city per this interval
 # city_key → { lat, lon, station (ICAO), name (for display / market matching) }
 CITIES = {
     "NYC": {
-        "lat": 40.7829,
-        "lon": -73.9654,
-        "station": "KNYC",
+        "lat": 40.7829, "lon": -73.9654, "station": "KNYC",
         "name": "New York City",
+        "kalshi_high": "KXHIGHNY", "kalshi_low": "KXLOWTNYC",
     },
     "MIA": {
-        "lat": 25.7959,
-        "lon": -80.2870,
-        "station": "KMIA",
+        "lat": 25.7959, "lon": -80.2870, "station": "KMIA",
         "name": "Miami",
+        "kalshi_high": "KXHIGHMIA", "kalshi_low": "KXLOWTMIA",
     },
     "CHI": {
-        "lat": 41.9742,
-        "lon": -87.9073,
-        "station": "KORD",
+        "lat": 41.9742, "lon": -87.9073, "station": "KORD",
         "name": "Chicago",
+        "kalshi_high": "KXHIGHCHI", "kalshi_low": "KXLOWTCHI",
     },
     "DEN": {
-        "lat": 39.8561,
-        "lon": -104.6737,
-        "station": "KDEN",
+        "lat": 39.8561, "lon": -104.6737, "station": "KDEN",
         "name": "Denver",
+        "kalshi_high": "KXHIGHDEN", "kalshi_low": "KXLOWTDEN",
     },
     "AUS": {
-        "lat": 30.1945,
-        "lon": -97.6699,
-        "station": "KAUS",
+        "lat": 30.1945, "lon": -97.6699, "station": "KAUS",
         "name": "Austin",
+        "kalshi_high": "KXHIGHAUS", "kalshi_low": "KXLOWTAUS",
     },
     "LAX": {
-        "lat": 34.0207,
-        "lon": -118.6919,
-        "station": "KCQT",
+        "lat": 34.0207, "lon": -118.6919, "station": "KCQT",
         "name": "Los Angeles",
+        "kalshi_high": "KXHIGHLAX", "kalshi_low": "KXLOWTLAX",
     },
     "PHL": {
-        "lat": 39.8721,
-        "lon": -75.2411,
-        "station": "KPHL",
+        "lat": 39.8721, "lon": -75.2411, "station": "KPHL",
         "name": "Philadelphia",
+        "kalshi_high": "KXHIGHPHIL", "kalshi_low": "KXLOWTPHIL",
     },
     "PHX": {
-        "lat": 33.4373,
-        "lon": -112.0078,
-        "station": "KPHX",
+        "lat": 33.4373, "lon": -112.0078, "station": "KPHX",
         "name": "Phoenix",
+        "kalshi_high": "KXHIGHTPHX", "kalshi_low": "KXLOWTPHX",
     },
     "SEA": {
-        "lat": 47.4502,
-        "lon": -122.3088,
-        "station": "KSEA",
+        "lat": 47.4502, "lon": -122.3088, "station": "KSEA",
         "name": "Seattle",
+        "kalshi_high": "KXHIGHTSEA", "kalshi_low": "KXLOWTSEA",
     },
     "ATL": {
-        "lat": 33.6407,
-        "lon": -84.4277,
-        "station": "KATL",
+        "lat": 33.6407, "lon": -84.4277, "station": "KATL",
         "name": "Atlanta",
+        "kalshi_high": "KXHIGHTATL", "kalshi_low": "KXLOWTATL",
     },
     "LAS": {
-        "lat": 36.0840,
-        "lon": -115.1537,
-        "station": "KLAS",
+        "lat": 36.0840, "lon": -115.1537, "station": "KLAS",
         "name": "Las Vegas",
+        "kalshi_high": "KXHIGHTLV", "kalshi_low": "KXLOWTLV",
     },
     "DCA": {
-        "lat": 38.8512,
-        "lon": -77.0402,
-        "station": "KDCA",
+        "lat": 38.8512, "lon": -77.0402, "station": "KDCA",
         "name": "Washington DC",
+        "kalshi_high": "KXHIGHTDC", "kalshi_low": "KXLOWTDC",
     },
     "BOS": {
-        "lat": 42.3656,
-        "lon": -71.0096,
-        "station": "KBOS",
+        "lat": 42.3656, "lon": -71.0096, "station": "KBOS",
         "name": "Boston",
+        "kalshi_high": "KXHIGHTBOS", "kalshi_low": "KXLOWTBOS",
     },
     "SFO": {
-        "lat": 37.6213,
-        "lon": -122.3790,
-        "station": "KSFO",
+        "lat": 37.6213, "lon": -122.3790, "station": "KSFO",
         "name": "San Francisco",
+        "kalshi_high": "KXHIGHTSFO", "kalshi_low": "KXLOWTSFO",
     },
     "DFW": {
-        "lat": 32.8998,
-        "lon": -97.0403,
-        "station": "KDFW",
+        "lat": 32.8998, "lon": -97.0403, "station": "KDFW",
         "name": "Dallas",
+        "kalshi_high": "KXHIGHTDAL", "kalshi_low": "KXLOWTDAL",
     },
     "MSP": {
-        "lat": 44.8848,
-        "lon": -93.2223,
-        "station": "KMSP",
+        "lat": 44.8848, "lon": -93.2223, "station": "KMSP",
         "name": "Minneapolis",
+        "kalshi_high": "KXHIGHTMIN", "kalshi_low": "KXLOWTMIN",
     },
     "IAH": {
-        "lat": 29.9902,
-        "lon": -95.3368,
-        "station": "KIAH",
+        "lat": 29.9902, "lon": -95.3368, "station": "KIAH",
         "name": "Houston",
+        "kalshi_high": "KXHIGHTHOU", "kalshi_low": "KXLOWTHOU",
     },
     "SAT": {
-        "lat": 29.5337,
-        "lon": -98.4698,
-        "station": "KSAT",
+        "lat": 29.5337, "lon": -98.4698, "station": "KSAT",
         "name": "San Antonio",
+        "kalshi_high": "KXHIGHTSA", "kalshi_low": "KXLOWTSA",
     },
     "OKC": {
-        "lat": 35.3931,
-        "lon": -97.6007,
-        "station": "KOKC",
+        "lat": 35.3931, "lon": -97.6007, "station": "KOKC",
         "name": "Oklahoma City",
+        "kalshi_high": "KXHIGHTOKC", "kalshi_low": "KXLOWTOKC",
     },
     "MSY": {
-        "lat": 29.9934,
-        "lon": -90.2580,
-        "station": "KMSY",
+        "lat": 29.9934, "lon": -90.2580, "station": "KMSY",
         "name": "New Orleans",
+        "kalshi_high": "KXHIGHTNO", "kalshi_low": "KXLOWTNO",
     },
 }
 
