@@ -120,15 +120,17 @@ class BiasTracker:
         type_data: dict[str, dict[str, Any]],
         key: str,
         new_error: float,
-        alpha: float = 0.15,  # EWMA smoothing factor (higher = faster adaptation)
+        alpha: float | None = None,
     ) -> None:
         """
         Update the exponentially-weighted moving average for a bias record.
 
-        alpha = 0.15 means ~50% of the weight is on the last ~4 observations.
-        This adapts quickly enough to track seasonal changes while being
-        stable enough to resist noise.
+        Uses config.BIAS_EWMA_ALPHA (default 0.25) for faster convergence.
+        At alpha=0.25, ~50% of the weight is on the last ~2.4 observations,
+        allowing rapid adaptation to model drift while still smoothing noise.
         """
+        if alpha is None:
+            alpha = getattr(config, "BIAS_EWMA_ALPHA", 0.25)
         record = type_data.get(key, {})
         old_bias = record.get("bias", 0.0)
         n = record.get("n_samples", 0)

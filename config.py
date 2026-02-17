@@ -64,8 +64,9 @@ EMOS_MAX_INFLATION = 2.0  # cap the inflation factor from bias tracker
 
 # ── MOS bias tracker ────────────────────────────────────────────────────────
 BIAS_TRACKER_ENABLED = True  # persist forecast-vs-actual bias per city/model
-BIAS_MIN_SAMPLES = 5  # minimum verifications before applying bias correction
+BIAS_MIN_SAMPLES = 3  # minimum verifications before applying bias correction (was 5)
 BIAS_MAX_CORRECTION_F = 3.0  # cap MOS correction at ±3°F
+BIAS_EWMA_ALPHA = 0.25  # EWMA smoothing factor — higher = faster adaptation (was 0.15)
 
 # ── KDE (kernel density estimation) ─────────────────────────────────────────
 USE_KDE = True  # use KDE instead of Gaussian for probability estimates
@@ -73,11 +74,36 @@ KDE_MIN_MEMBERS = 10  # below this, fallback to Gaussian
 KDE_BANDWIDTH_FACTOR = 1.0  # multiplier on Scott's rule (>1 = smoother)
 
 # ── Signal thresholds ─────────────────────────────────────────────────────────
-MIN_EDGE_PERCENT = 8.0  # minimum edge to alert
+MIN_EDGE_PERCENT = 8.0  # minimum edge to alert (base threshold)
 MIN_VOLUME = 5000  # minimum market volume in dollars
 MIN_TIME_TO_CLOSE_MINUTES = 60  # ignore markets closing within this window
 EDGE_PERSIST_COUNT = 2  # edge must persist across N polling cycles
 MAX_ENSEMBLE_SPREAD_F = 4.0  # suppress if ensemble spread exceeds this
+
+# ── Tiered edge thresholds (simulation-driven) ──────────────────────────────
+# Center bands are noisy — require larger edge. Tail bands have real alpha.
+MIN_EDGE_CENTER_PERCENT = 12.0   # center bands (within ±1 band of mode)
+MIN_EDGE_SHOULDER_PERCENT = 10.0  # shoulder bands (±2-3 bands from mode)
+MIN_EDGE_TAIL_PERCENT = 8.0      # tail bands (±4+ bands, "or above/below")
+
+# ── Bid-ask spread filter ────────────────────────────────────────────────────
+# Simulation showed fees destroy marginal edges. Only trade tight books.
+MAX_BID_ASK_SPREAD = 0.07  # skip markets where ask - bid > 7 cents
+
+# ── Confidence-gated thresholds ──────────────────────────────────────────────
+# MEDIUM confidence needs a bigger edge to overcome calibration uncertainty.
+MIN_EDGE_MEDIUM_CONFIDENCE_PERCENT = 12.0  # override for std > 2°F
+MIN_EDGE_LOW_CONFIDENCE_PERCENT = 20.0     # override for std > 8°F (rarely trade)
+
+# ── Nowcast-aware signal boosting ────────────────────────────────────────────
+# When METAR shows the model has been corrected, we have higher conviction.
+# Allow a lower edge threshold when nowcast correction is active.
+NOWCAST_ACTIVE_EDGE_DISCOUNT = 0.75  # multiply edge threshold by this when nowcast active
+
+# ── Kelly criterion position sizing ──────────────────────────────────────────
+KELLY_FRACTION = 0.25  # quarter-Kelly for safety (full Kelly is too aggressive)
+KELLY_MAX_CONTRACTS = 10  # cap position size regardless of edge
+BANKROLL = 500.0  # starting bankroll for Kelly calculation
 
 # ── Alert ─────────────────────────────────────────────────────────────────────
 DISCORD_WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL")
