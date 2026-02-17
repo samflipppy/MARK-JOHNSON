@@ -195,10 +195,15 @@ async def daily_summary_loop(dispatcher: AlertDispatcher) -> None:
 async def main() -> None:
     _print_banner()
 
-    # Set up graceful shutdown
+    # Set up graceful shutdown (cross-platform)
     loop = asyncio.get_running_loop()
-    for sig_name in (signal.SIGINT, signal.SIGTERM):
-        loop.add_signal_handler(sig_name, lambda: _shutdown_event.set())
+    if sys.platform != "win32":
+        for sig_name in (signal.SIGINT, signal.SIGTERM):
+            loop.add_signal_handler(sig_name, lambda: _shutdown_event.set())
+    else:
+        # Windows: signal handlers not supported on the event loop.
+        # Ctrl+C will raise KeyboardInterrupt which we catch below.
+        pass
 
     # Create shared HTTP session
     async with aiohttp.ClientSession(
@@ -232,8 +237,8 @@ async def main() -> None:
 
         try:
             await asyncio.gather(*tasks)
-        except asyncio.CancelledError:
-            pass
+        except (asyncio.CancelledError, KeyboardInterrupt):
+            _shutdown_event.set()
         finally:
             logger.info("Shutting down gracefully...")
             for task in tasks:
