@@ -1,8 +1,8 @@
 """
 Kalshi WebSocket client for real-time price updates.
 
-Connects to the public ticker channel and streams price/volume changes
-for temperature markets. No API key required for public channels.
+Connects to the ticker channel and streams price/volume changes
+for temperature markets. Uses RSA-PSS auth headers when available.
 """
 from __future__ import annotations
 
@@ -14,10 +14,12 @@ from typing import Any, Callable
 import aiohttp
 
 import config
+from utils.kalshi_auth import build_auth_headers, is_auth_available
 
 logger = logging.getLogger("mark_johnson.kalshi_ws")
 
 KALSHI_WS_URL = "wss://api.elections.kalshi.com/trade-api/ws/v2"
+KALSHI_WS_PATH = "/trade-api/ws/v2"
 
 
 class KalshiWebSocket:
@@ -46,18 +48,30 @@ class KalshiWebSocket:
         return self._disabled
 
     async def connect(self) -> bool:
-        """Establish WebSocket connection. Returns False on auth errors."""
+        """Establish WebSocket connection with auth headers if available."""
         if self._disabled:
             return False
 
+        # Check if auth is configured
+        if not is_auth_available():
+            logger.info(
+                "Kalshi API key not configured — WebSocket disabled. "
+                "Set KALSHI_API_KEY and KALSHI_PRIVATE_KEY in .env for real-time updates."
+            )
+            self._disabled = True
+            return False
+
         try:
+            # Sign the WebSocket handshake request
+            auth_headers = build_auth_headers("GET", KALSHI_WS_PATH)
             self._ws = await self._session.ws_connect(
                 KALSHI_WS_URL,
+                headers=auth_headers,
                 heartbeat=30.0,
                 timeout=15.0,
             )
             self._auth_failures = 0  # reset on success
-            logger.info("WebSocket connected to Kalshi")
+            logger.info("WebSocket connected to Kalshi (authenticated)")
             return True
         except Exception as exc:
             exc_str = str(exc)
@@ -68,7 +82,7 @@ class KalshiWebSocket:
                     logger.warning(
                         "WebSocket disabled after %d auth failures — "
                         "falling back to REST polling only. "
-                        "Set KALSHI_API_KEY to enable real-time updates.",
+                        "Check KALSHI_API_KEY and KALSHI_PRIVATE_KEY in .env.",
                         self._auth_failures,
                     )
                     return False

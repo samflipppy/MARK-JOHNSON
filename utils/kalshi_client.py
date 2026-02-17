@@ -9,6 +9,7 @@ from typing import Any
 import aiohttp
 
 import config
+from utils.kalshi_auth import build_auth_headers, is_auth_available
 
 logger = logging.getLogger("mark_johnson.kalshi")
 
@@ -136,7 +137,12 @@ class KalshiClient:
 
         for attempt in range(max_retries + 1):
             try:
-                async with session.get(url, params=params) as resp:
+                # Include auth headers if API key is configured
+                headers = {}
+                if is_auth_available():
+                    headers = build_auth_headers("GET", path)
+
+                async with session.get(url, params=params, headers=headers) as resp:
                     if resp.status == 429:
                         retry_after = float(
                             resp.headers.get("Retry-After", backoff)
