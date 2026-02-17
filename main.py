@@ -24,7 +24,7 @@ from services.weather_engine import WeatherEngine
 from utils.discord_client import DiscordWebhookClient
 from utils.kalshi_client import KalshiClient
 from utils.kalshi_ws import KalshiWebSocket
-from utils.weather_client import NWSClient, OpenMeteoClient
+from utils.weather_client import METARClient, NWSClient, OpenMeteoClient
 
 # ── Logging setup ─────────────────────────────────────────────────────────────
 logging.basicConfig(
@@ -265,11 +265,12 @@ async def main() -> None:
         kalshi = KalshiClient(session=session)
         openmeteo = OpenMeteoClient(session=session)
         nws = NWSClient(session=session)
+        metar = METARClient(session=session)
         discord = DiscordWebhookClient(session=session)
 
         # Initialize services
         scanner = MarketScanner(kalshi)
-        weather = WeatherEngine(openmeteo, nws)
+        weather = WeatherEngine(openmeteo, nws, metar=metar)
         signal_engine = SignalEngine()
         dispatcher = AlertDispatcher(discord)
 

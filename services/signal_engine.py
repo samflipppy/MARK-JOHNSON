@@ -142,6 +142,23 @@ class SignalEngine:
             )
             return False
 
+        # ── Narrow-band sanity check ─────────────────────────────────────
+        # A single 1-2°F narrow band should NEVER have >50% implied prob.
+        # If it does, the market is almost certainly cumulative (e.g. "56°F
+        # or below") being mis-parsed as a narrow range ("56-57°F").
+        # Suppress these to avoid false EXTREME signals.
+        if market.band_min is not None and market.band_max is not None:
+            band_width = market.band_max - market.band_min
+            if band_width <= 3.0 and market.implied_prob > 0.50:
+                logger.warning(
+                    "SUPPRESSED %s — narrow %.0f°F band '%s' at %.0f%% implied "
+                    "prob is suspicious (likely cumulative market mis-parsed as "
+                    "narrow band). Raw title: '%s'",
+                    market.ticker, band_width, market.band_label,
+                    market.implied_prob * 100, market.raw_title,
+                )
+                return False
+
         return True
 
     def _is_on_cooldown(self, city_key: str) -> bool:

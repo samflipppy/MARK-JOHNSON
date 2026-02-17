@@ -77,6 +77,14 @@ class MarketScanner:
             logger.debug("Could not parse temperature band: %s", title)
             return None
 
+        # Debug log for band parsing verification
+        logger.debug(
+            "Parsed %s: title='%s' → band=(%s, %s) city=%s type=%s",
+            ticker, title,
+            band_min, band_max,
+            city_key, market_type,
+        )
+
         # Extract pricing
         yes_price = raw.get("yes_price", 0) or 0
         no_price = raw.get("no_price", 0) or 0

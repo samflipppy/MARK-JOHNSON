@@ -34,6 +34,31 @@ OPENMETEO_ENSEMBLE_URL = "https://ensemble-api.open-meteo.com/v1/ensemble"
 NWS_API_BASE = "https://api.weather.gov"
 WEATHER_POLL_INTERVAL_SECONDS = 600  # 10 minutes
 
+# ── METAR surface observations ───────────────────────────────────────────────
+METAR_ENABLED = True  # fetch real-time airport observations for bias correction
+METAR_API_URL = "https://aviationweather.gov/api/data/metar"
+METAR_MAX_AGE_MINUTES = 120  # ignore observations older than 2 hours
+
+# ── Nowcasting / bias correction ─────────────────────────────────────────────
+NOWCAST_CORRECTION_WEIGHT = 0.25  # how aggressively to correct based on current obs error
+NOWCAST_MAX_CORRECTION_F = 5.0  # cap bias correction at ±5°F
+
+# ── Ensemble model weights (higher = more trusted) ──────────────────────────
+# Based on published global model skill: ECMWF >> GFS > ICON > GEM ≈ MeteoFrance
+MODEL_WEIGHTS = {
+    "ecmwf_ifs025": 2.5,   # best global model by far
+    "gfs_seamless": 1.5,   # strong second
+    "icon_seamless": 1.0,  # solid European model
+    "gem_global": 0.7,     # Canadian model
+    "meteofrance_seamless": 0.7,  # MeteoFrance Arpege
+}
+MODEL_WEIGHT_DEFAULT = 0.5  # for unknown model names
+
+# ── KDE (kernel density estimation) ─────────────────────────────────────────
+USE_KDE = True  # use KDE instead of Gaussian for probability estimates
+KDE_MIN_MEMBERS = 10  # below this, fallback to Gaussian
+KDE_BANDWIDTH_FACTOR = 1.0  # multiplier on Scott's rule (>1 = smoother)
+
 # ── Signal thresholds ─────────────────────────────────────────────────────────
 MIN_EDGE_PERCENT = 8.0  # minimum edge to alert
 MIN_VOLUME = 5000  # minimum market volume in dollars
