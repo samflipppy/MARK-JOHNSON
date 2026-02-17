@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import date
+
 from scipy import stats
 
 
@@ -14,6 +16,7 @@ class TemperatureDistribution:
     member_values: list[float] = field(default_factory=list)
     sources: dict[str, list[float]] = field(default_factory=dict)
     low_confidence: bool = False
+    forecast_date: date | None = None  # local date this forecast targets
 
     def __post_init__(self) -> None:
         # Floor unreasonably small std

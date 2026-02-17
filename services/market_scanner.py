@@ -10,6 +10,7 @@ from utils.kalshi_client import (
     KalshiClient,
     detect_market_type,
     parse_temperature_band,
+    parse_ticker_date,
 )
 
 logger = logging.getLogger("mark_johnson.market_scanner")
@@ -118,6 +119,9 @@ class MarketScanner:
         except (ValueError, AttributeError):
             close_time = datetime.now(timezone.utc)
 
+        # Parse settlement date from ticker (e.g. KXHIGHNY-26FEB17-T44 → 2026-02-17)
+        market_date = parse_ticker_date(ticker)
+
         return Market(
             ticker=ticker,
             city=city_key,
@@ -131,4 +135,5 @@ class MarketScanner:
             close_time=close_time,
             raw_title=title,
             event_ticker=event_ticker,
+            market_date=market_date,
         )

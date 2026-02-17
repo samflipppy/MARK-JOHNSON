@@ -137,7 +137,7 @@ async def weather_refresh_loop(engine: WeatherEngine) -> None:
     while not _shutdown_event.is_set():
         try:
             distributions = await engine.refresh_all()
-            for (city, _), dist in distributions.items():
+            for (city, _, _date), dist in distributions.items():
                 log_forecast(city, dist)
             _data_updated.set()
             logger.info("Weather refresh complete — %d distributions", len(distributions))

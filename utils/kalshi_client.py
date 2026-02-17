@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
+from datetime import date
 from typing import Any
 
 import aiohttp
@@ -10,6 +11,13 @@ import aiohttp
 import config
 
 logger = logging.getLogger("mark_johnson.kalshi")
+
+# Ticker date pattern: matches e.g. "-26FEB17-" → 2026-02-17
+_TICKER_DATE_RE = re.compile(r"-(\d{2})([A-Z]{3})(\d{1,2})-")
+_MONTH_MAP = {
+    "JAN": 1, "FEB": 2, "MAR": 3, "APR": 4, "MAY": 5, "JUN": 6,
+    "JUL": 7, "AUG": 8, "SEP": 9, "OCT": 10, "NOV": 11, "DEC": 12,
+}
 
 # Regex patterns for parsing temperature bands from market titles/subtitles
 # Matches patterns like "46° to 47°", "46 to 47", "46°F to 47°F"
@@ -69,6 +77,22 @@ def parse_temperature_band(
         return float(m.group(1)), None
 
     return None, None
+
+
+def parse_ticker_date(ticker: str) -> date | None:
+    """Extract settlement date from a Kalshi ticker like KXHIGHNY-26FEB17-T44."""
+    m = _TICKER_DATE_RE.search(ticker)
+    if not m:
+        return None
+    try:
+        year = 2000 + int(m.group(1))
+        month = _MONTH_MAP.get(m.group(2))
+        day = int(m.group(3))
+        if month is None:
+            return None
+        return date(year, month, day)
+    except (ValueError, OverflowError):
+        return None
 
 
 def detect_market_type(title: str) -> str:

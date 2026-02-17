@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import date, datetime
 
 
 @dataclass
@@ -20,6 +20,7 @@ class Market:
     close_time: datetime
     raw_title: str
     event_ticker: str = ""
+    market_date: date | None = None  # settlement date parsed from ticker
 
     @property
     def band_label(self) -> str:
