@@ -29,6 +29,8 @@ class SignalEngine:
         self._edge_counts: dict[str, int] = {}
         # Cooldown tracking: city_key → last alert timestamp (monotonic)
         self._last_alert_time: dict[str, float] = {}
+        # Track tickers already warned about (log once, then suppress)
+        self._warned_tickers: set[str] = set()
 
     async def scan_for_signals(
         self,
@@ -204,8 +206,8 @@ class SignalEngine:
 
         return threshold
 
-    @staticmethod
     def _passes_filters(
+        self,
         market: Market,
         dist: TemperatureDistribution,
         edge: float,
@@ -248,6 +250,26 @@ class SignalEngine:
             )
             return False
 
+        # ── Minimum market price filter ────────────────────────────────
+        # Markets at or near the Kalshi price floor (1-4¢) have no real
+        # counterparty interest. Edge against empty books is phantom.
+        if market.implied_prob <= config.MIN_IMPLIED_PROB:
+            logger.debug(
+                "Suppressed %s — implied prob %.0f¢ at/below floor (min %d¢)",
+                market.ticker,
+                market.implied_prob * 100,
+                int(config.MIN_IMPLIED_PROB * 100),
+            )
+            return False
+        if market.implied_prob >= (1.0 - config.MIN_IMPLIED_PROB):
+            logger.debug(
+                "Suppressed %s — implied prob %.0f¢ at/above ceiling (max %d¢)",
+                market.ticker,
+                market.implied_prob * 100,
+                int((1.0 - config.MIN_IMPLIED_PROB) * 100),
+            )
+            return False
+
         # ── Narrow-band sanity check ───────────────────────────────────
         # A single 1-2°F narrow band should NEVER have >50% implied prob.
         # If it does, the market is almost certainly cumulative (e.g. "56°F
@@ -256,13 +278,15 @@ class SignalEngine:
         if market.band_min is not None and market.band_max is not None:
             band_width = market.band_max - market.band_min
             if band_width <= 3.0 and market.implied_prob > 0.50:
-                logger.warning(
-                    "SUPPRESSED %s — narrow %.0f°F band '%s' at %.0f%% implied "
-                    "prob is suspicious (likely cumulative market mis-parsed as "
-                    "narrow band). Raw title: '%s'",
-                    market.ticker, band_width, market.band_label,
-                    market.implied_prob * 100, market.raw_title,
-                )
+                if market.ticker not in self._warned_tickers:
+                    logger.warning(
+                        "SUPPRESSED %s — narrow %.0f°F band '%s' at %.0f%% implied "
+                        "prob is suspicious (likely cumulative market mis-parsed as "
+                        "narrow band). Raw title: '%s'",
+                        market.ticker, band_width, market.band_label,
+                        market.implied_prob * 100, market.raw_title,
+                    )
+                    self._warned_tickers.add(market.ticker)
                 return False
 
         # ── Skip dust-level probability bands ──────────────────────────

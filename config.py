@@ -90,6 +90,12 @@ MIN_EDGE_TAIL_PERCENT = 8.0      # tail bands (±4+ bands, "or above/below")
 # Simulation showed fees destroy marginal edges. Only trade tight books.
 MAX_BID_ASK_SPREAD = 0.07  # skip markets where ask - bid > 7 cents
 
+# ── Minimum market price filter ──────────────────────────────────────────────
+# Markets at 1-4¢ are at or near the Kalshi price floor with no real
+# counterparty interest. "Edge" against a 1¢ market is phantom — there's
+# nobody on the other side. Require implied prob > 5¢ (or < 95¢ for NO).
+MIN_IMPLIED_PROB = 0.05  # skip markets priced at ≤5¢ or ≥95¢
+
 # ── Confidence-gated thresholds ──────────────────────────────────────────────
 # MEDIUM confidence needs a bigger edge to overcome calibration uncertainty.
 MIN_EDGE_MEDIUM_CONFIDENCE_PERCENT = 12.0  # override for std > 2°F
