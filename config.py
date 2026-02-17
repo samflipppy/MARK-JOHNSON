@@ -15,6 +15,17 @@ MARKET_SERIES_KEYWORDS = [
     "lowest temperature",
 ]
 
+# Kalshi series tickers for direct filtering (avoids paginating all markets)
+# These are the known temperature-related series on Kalshi.
+KALSHI_TEMPERATURE_SERIES = [
+    "KXHIGHTEMP",
+    "KXLOWTEMP",
+]
+
+# Rate-limiting for external APIs
+OPENMETEO_MAX_CONCURRENT = 5  # max simultaneous Open-Meteo requests
+OPENMETEO_REQUEST_DELAY = 0.3  # seconds between batches
+
 # ── Weather ───────────────────────────────────────────────────────────────────
 OPENMETEO_ENSEMBLE_URL = "https://ensemble-api.open-meteo.com/v1/ensemble"
 NWS_API_BASE = "https://api.weather.gov"

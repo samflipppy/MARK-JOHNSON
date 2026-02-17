@@ -23,6 +23,7 @@ from services.signal_engine import SignalEngine
 from services.weather_engine import WeatherEngine
 from utils.discord_client import DiscordWebhookClient
 from utils.kalshi_client import KalshiClient
+from utils.kalshi_ws import KalshiWebSocket
 from utils.weather_client import NWSClient, OpenMeteoClient
 
 # ── Logging setup ─────────────────────────────────────────────────────────────
@@ -59,7 +60,9 @@ def _print_banner() -> None:
 # ── Loop tasks ────────────────────────────────────────────────────────────────
 
 
-async def market_scan_loop(scanner: MarketScanner) -> None:
+async def market_scan_loop(
+    scanner: MarketScanner, ws: KalshiWebSocket | None = None
+) -> None:
     """Poll Kalshi for temperature markets every MARKET_POLL_INTERVAL_SECONDS."""
     while not _shutdown_event.is_set():
         try:
@@ -67,6 +70,10 @@ async def market_scan_loop(scanner: MarketScanner) -> None:
             log_market_snapshot(markets)
             _data_updated.set()
             logger.info("Market scan complete — %d markets", len(markets))
+
+            # Subscribe to any new tickers via websocket
+            if ws and markets:
+                await ws.subscribe([m.ticker for m in markets])
         except Exception as exc:
             logger.error("Market scan loop error: %s", exc)
 
@@ -78,6 +85,40 @@ async def market_scan_loop(scanner: MarketScanner) -> None:
             break  # shutdown requested
         except asyncio.TimeoutError:
             pass
+
+
+async def kalshi_ws_loop(
+    ws: KalshiWebSocket, scanner: MarketScanner
+) -> None:
+    """Maintain a Kalshi WebSocket connection for real-time price updates."""
+    while not _shutdown_event.is_set():
+        connected = await ws.connect()
+        if not connected:
+            logger.warning("WebSocket connection failed — retrying in 30s")
+            try:
+                await asyncio.wait_for(_shutdown_event.wait(), timeout=30.0)
+                break
+            except asyncio.TimeoutError:
+                continue
+
+        # Subscribe to currently known tickers
+        if scanner.markets:
+            await ws.subscribe(list(scanner.markets.keys()))
+
+        # Listen until disconnect or shutdown
+        await ws.listen(_shutdown_event)
+
+        if _shutdown_event.is_set():
+            break
+
+        # Connection dropped — reconnect after brief pause
+        logger.info("WebSocket disconnected — reconnecting in 5s")
+        await ws.close()
+        try:
+            await asyncio.wait_for(_shutdown_event.wait(), timeout=5.0)
+            break
+        except asyncio.TimeoutError:
+            continue
 
 
 async def weather_refresh_loop(engine: WeatherEngine) -> None:
@@ -221,11 +262,30 @@ async def main() -> None:
         signal_engine = SignalEngine()
         dispatcher = AlertDispatcher(discord)
 
+        # WebSocket for real-time Kalshi price updates
+        def _on_ticker_update(payload: dict) -> None:
+            """Update in-memory market data from a WS ticker message."""
+            ticker = payload.get("ticker") or payload.get("market_ticker")
+            if ticker and ticker in scanner.markets:
+                m = scanner.markets[ticker]
+                yes_bid = payload.get("yes_bid")
+                yes_ask = payload.get("yes_ask")
+                if yes_bid is not None and yes_ask is not None:
+                    m.best_bid = yes_bid / 100.0
+                    m.best_ask = yes_ask / 100.0
+                    m.implied_prob = (m.best_bid + m.best_ask) / 2.0
+                vol = payload.get("volume")
+                if vol is not None:
+                    m.volume = float(vol)
+                _data_updated.set()
+
+        kalshi_ws = KalshiWebSocket(session=session, on_ticker_update=_on_ticker_update)
+
         logger.info("All services initialized — starting loops")
 
         # Run all loops concurrently
         tasks = [
-            asyncio.create_task(market_scan_loop(scanner), name="market_scan"),
+            asyncio.create_task(market_scan_loop(scanner, kalshi_ws), name="market_scan"),
             asyncio.create_task(weather_refresh_loop(weather), name="weather_refresh"),
             asyncio.create_task(
                 signal_scan_loop(scanner, weather, signal_engine, dispatcher),
@@ -233,6 +293,7 @@ async def main() -> None:
             ),
             asyncio.create_task(heartbeat_loop(dispatcher), name="heartbeat"),
             asyncio.create_task(daily_summary_loop(dispatcher), name="daily_summary"),
+            asyncio.create_task(kalshi_ws_loop(kalshi_ws, scanner), name="kalshi_ws"),
         ]
 
         try:

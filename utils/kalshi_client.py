@@ -143,35 +143,54 @@ class KalshiClient:
 
     async def get_open_temperature_markets(self) -> list[dict[str, Any]]:
         """
-        Fetch all open markets, paginating through Kalshi's cursor-based API,
-        and return only those whose title/event matches temperature keywords.
+        Fetch open temperature markets using series_ticker filters.
+
+        Instead of paginating through ALL open markets and filtering client-side,
+        we make one targeted request per known temperature series ticker.
+        This reduces API calls from potentially dozens of pages to just 2-3 requests.
         """
         all_markets: list[dict[str, Any]] = []
-        cursor: str | None = None
 
-        while True:
-            params: dict[str, Any] = {"status": "open", "limit": 200}
-            if cursor:
-                params["cursor"] = cursor
+        for series in config.KALSHI_TEMPERATURE_SERIES:
+            cursor: str | None = None
+            while True:
+                params: dict[str, Any] = {
+                    "status": "open",
+                    "series_ticker": series,
+                    "limit": 200,
+                }
+                if cursor:
+                    params["cursor"] = cursor
 
-            data = await self._get("/markets", params=params)
-            markets = data.get("markets", [])
+                data = await self._get("/markets", params=params)
+                markets = data.get("markets", [])
+                all_markets.extend(markets)
 
-            for mkt in markets:
-                combined = " ".join(
-                    [
-                        mkt.get("title", ""),
-                        mkt.get("subtitle", ""),
-                        mkt.get("event_ticker", ""),
-                        mkt.get("series_ticker", ""),
-                    ]
-                ).lower()
+                cursor = data.get("cursor")
+                if not cursor or not markets:
+                    break
+
+        # Also do a keyword-based fallback scan (single page only) to catch
+        # any temperature series we don't know about yet.
+        try:
+            data = await self._get("/markets", params={"status": "open", "limit": 200})
+            for mkt in data.get("markets", []):
+                if mkt.get("ticker") in {m["ticker"] for m in all_markets}:
+                    continue  # already have it
+                combined = " ".join([
+                    mkt.get("title", ""),
+                    mkt.get("subtitle", ""),
+                    mkt.get("event_ticker", ""),
+                    mkt.get("series_ticker", ""),
+                ]).lower()
                 if any(kw in combined for kw in config.MARKET_SERIES_KEYWORDS):
                     all_markets.append(mkt)
-
-            cursor = data.get("cursor")
-            if not cursor or not markets:
-                break
+                    # Log unknown series so we can add it to config
+                    st = mkt.get("series_ticker", "")
+                    if st and st not in config.KALSHI_TEMPERATURE_SERIES:
+                        logger.info("Found temperature market in unknown series: %s", st)
+        except Exception:
+            pass  # Fallback is best-effort
 
         logger.info("Found %d open temperature markets", len(all_markets))
         return all_markets

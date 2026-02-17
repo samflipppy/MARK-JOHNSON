@@ -33,6 +33,15 @@ class OpenMeteoClient:
         if self._owns_session and self._session and not self._session.closed:
             await self._session.close()
 
+    # Class-level semaphore to limit concurrent Open-Meteo requests
+    _semaphore: asyncio.Semaphore | None = None
+
+    @classmethod
+    def _get_semaphore(cls) -> asyncio.Semaphore:
+        if cls._semaphore is None:
+            cls._semaphore = asyncio.Semaphore(config.OPENMETEO_MAX_CONCURRENT)
+        return cls._semaphore
+
     async def get_ensemble_forecast(
         self, lat: float, lon: float
     ) -> dict[str, list[float]]:
@@ -41,28 +50,52 @@ class OpenMeteoClient:
 
         Returns dict mapping model name → list of temperature values (°F)
         for today's max and min temps across all ensemble members.
+
+        Uses a semaphore to limit concurrent requests (Open-Meteo 429s if
+        too many requests hit simultaneously).
         """
-        session = await self._ensure_session()
-        params = {
-            "latitude": lat,
-            "longitude": lon,
-            "daily": "temperature_2m_max,temperature_2m_min",
-            "temperature_unit": "fahrenheit",
-            "models": "icon_seamless,gfs_seamless,ecmwf_ifs025,gem_global,meteofrance_seamless",
-            "forecast_days": 1,
-        }
+        sem = self._get_semaphore()
+        async with sem:
+            session = await self._ensure_session()
+            params = {
+                "latitude": lat,
+                "longitude": lon,
+                "daily": "temperature_2m_max,temperature_2m_min",
+                "temperature_unit": "fahrenheit",
+                "models": "icon_seamless,gfs_seamless,ecmwf_ifs025,gem_global,meteofrance_seamless",
+                "forecast_days": 1,
+            }
 
-        try:
-            async with session.get(
-                config.OPENMETEO_ENSEMBLE_URL, params=params
-            ) as resp:
-                resp.raise_for_status()
-                data = await resp.json()
-        except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
-            logger.error("Open-Meteo request failed: %s", exc)
-            return {}
+            backoff = 1.0
+            for attempt in range(4):
+                try:
+                    async with session.get(
+                        config.OPENMETEO_ENSEMBLE_URL, params=params
+                    ) as resp:
+                        if resp.status == 429:
+                            retry_after = float(resp.headers.get("Retry-After", backoff))
+                            logger.warning(
+                                "Open-Meteo 429 for (%.2f, %.2f) — backing off %.1fs (attempt %d)",
+                                lat, lon, retry_after, attempt + 1,
+                            )
+                            await asyncio.sleep(retry_after)
+                            backoff *= 2
+                            continue
+                        resp.raise_for_status()
+                        data = await resp.json()
+                        return self._parse_ensemble_response(data)
+                except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
+                    if attempt == 3:
+                        logger.error("Open-Meteo request failed after retries: %s", exc)
+                        return {}
+                    logger.warning("Open-Meteo request error (attempt %d): %s", attempt + 1, exc)
+                    await asyncio.sleep(backoff)
+                    backoff *= 2
 
-        return self._parse_ensemble_response(data)
+            # Small delay between requests to avoid bursts
+            await asyncio.sleep(config.OPENMETEO_REQUEST_DELAY)
+
+        return {}
 
     @staticmethod
     def _parse_ensemble_response(data: dict[str, Any]) -> dict[str, list[float]]:
