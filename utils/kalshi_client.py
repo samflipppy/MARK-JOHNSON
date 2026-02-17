@@ -185,9 +185,8 @@ class KalshiClient:
                 # Log but continue — one failed series shouldn't block others
                 logger.warning("  %s: query failed — %s", series, exc)
 
-            # Stagger requests: brief pause every 10 requests
-            if (i + 1) % 10 == 0:
-                await asyncio.sleep(0.5)
+            # Stagger requests: small delay between every request to stay under rate limits
+            await asyncio.sleep(0.15)
 
         logger.info(
             "Found %d open temperature markets across %d series",
