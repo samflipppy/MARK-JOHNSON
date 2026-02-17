@@ -7,10 +7,13 @@ Pipeline:
   3. Fetch real-time METAR surface observations
   4. Apply model-specific skill weighting (ECMWF > GFS > ICON > ...)
   5. Blend NWS into ensemble with configurable weight
-  6. Compute nowcasting bias correction via diurnal cycle physics
-  7. Shift entire ensemble by bias to correct systematic model error
-  8. Fit Kernel Density Estimation on weighted, corrected members
-  9. Output a TemperatureDistribution for each city/type/date
+  6. Apply MOS bias correction from historical verification data
+  7. Anchor to climatological prior (Bayesian blend with NOAA normals)
+  8. Calibrate ensemble spread (EMOS variance inflation)
+  9. Compute nowcasting bias correction via diurnal cycle physics
+  10. Shift entire ensemble by combined bias corrections
+  11. Fit Kernel Density Estimation on weighted, corrected members
+  12. Output a TemperatureDistribution for each city/type/date
 """
 from __future__ import annotations
 
@@ -25,6 +28,13 @@ import numpy as np
 
 import config
 from models.forecast import TemperatureDistribution
+from services.bias_tracker import BiasTracker
+from services.climatology import (
+    bayesian_climo_blend,
+    compute_climo_anomaly,
+    emos_spread_calibration,
+    get_climate_normal,
+)
 from utils.weather_client import METARClient, NWSClient, OpenMeteoClient
 
 logger = logging.getLogger("mark_johnson.weather_engine")
@@ -133,10 +143,12 @@ class WeatherEngine:
         openmeteo: OpenMeteoClient,
         nws: NWSClient,
         metar: METARClient | None = None,
+        bias_tracker: BiasTracker | None = None,
     ) -> None:
         self._openmeteo = openmeteo
         self._nws = nws
         self._metar = metar
+        self._bias_tracker = bias_tracker
         # Latest distributions keyed by (city_key, market_type, date_str)
         self.distributions: dict[tuple[str, str, str], TemperatureDistribution] = {}
 
@@ -217,6 +229,7 @@ class WeatherEngine:
                 city_key, "high_temp", ensemble_data, nws_data,
                 temp_field="max", forecast_date=forecast_date,
                 metar_obs=metar_obs, tz_name=tz_name,
+                bias_tracker=self._bias_tracker,
             )
             if high_dist:
                 distributions.append(("high_temp", high_dist))
@@ -226,6 +239,7 @@ class WeatherEngine:
                 city_key, "low_temp", ensemble_data, nws_data,
                 temp_field="min", forecast_date=forecast_date,
                 metar_obs=metar_obs, tz_name=tz_name,
+                bias_tracker=self._bias_tracker,
             )
             if low_dist:
                 distributions.append(("low_temp", low_dist))
@@ -242,14 +256,19 @@ class WeatherEngine:
         forecast_date: date | None = None,
         metar_obs: dict | None = None,
         tz_name: str = "UTC",
+        bias_tracker: BiasTracker | None = None,
     ) -> TemperatureDistribution | None:
         """
-        Build a distribution by:
-        1. Collecting model-weighted ensemble members
-        2. Blending NWS point forecast
-        3. Computing nowcasting bias via diurnal physics
-        4. Shifting members by the bias
-        5. Fitting KDE on the corrected, weighted members
+        Build a distribution through a 9-step pipeline:
+        1. Collect model-weighted ensemble members
+        2. Blend NWS point forecast
+        3. Apply MOS historical bias correction
+        4. Anchor to climatological prior (Bayesian)
+        5. Calibrate ensemble spread (EMOS)
+        6. Compute nowcasting bias via diurnal physics
+        7. Shift members by combined corrections
+        8. Fit KDE on the corrected, weighted members
+        9. Log diagnostics
         """
 
         sources: dict[str, list[float]] = {}
@@ -318,8 +337,79 @@ class WeatherEngine:
             blended_mean = nws_val
             blended_std = 3.0
 
-        # ── Step 5: Nowcasting bias correction (diurnal cycle physics) ───────
-        bias_correction = 0.0
+        # ── Step 5: MOS bias correction (historical model error) ─────────────
+        mos_correction = 0.0
+        if bias_tracker is not None and config.BIAS_TRACKER_ENABLED:
+            mos_bias = bias_tracker.get_bias(city_key, market_type)
+            if abs(mos_bias) > 0.05:
+                mos_correction = -mos_bias  # subtract warm bias, add cold bias
+                mos_correction = max(
+                    -config.BIAS_MAX_CORRECTION_F,
+                    min(config.BIAS_MAX_CORRECTION_F, mos_correction),
+                )
+                logger.info(
+                    "%s %s MOS: historical bias=%+.2f°F → correction=%+.2f°F",
+                    city_key, market_type, mos_bias, mos_correction,
+                )
+
+        # ── Step 6: Climatological prior (Bayesian anchoring) ────────────────
+        climo_correction = 0.0
+        if forecast_date is not None and config.CLIMO_PRIOR_WEIGHT > 0:
+            climo_field = "high" if market_type == "high_temp" else "low"
+            normal = get_climate_normal(city_key, forecast_date.month, climo_field)
+
+            if normal is not None:
+                climo_mean, climo_std = normal
+
+                # Check for extreme anomaly
+                anomaly = compute_climo_anomaly(
+                    blended_mean + mos_correction,
+                    city_key, forecast_date.month, climo_field,
+                )
+                if anomaly is not None and abs(anomaly) > config.CLIMO_ANOMALY_WARN_SIGMA:
+                    logger.warning(
+                        "%s %s: forecast %.1f°F is %.1fσ from climo normal %.1f°F",
+                        city_key, market_type,
+                        blended_mean + mos_correction, anomaly, climo_mean,
+                    )
+
+                # Bayesian blend: pull toward climatology
+                pre_climo = blended_mean + mos_correction
+                post_mean, post_std = bayesian_climo_blend(
+                    pre_climo, blended_std,
+                    climo_mean, climo_std,
+                    config.CLIMO_PRIOR_WEIGHT,
+                )
+                climo_correction = post_mean - pre_climo
+
+                if abs(climo_correction) > 0.1:
+                    logger.debug(
+                        "%s %s climo anchor: %.1f°F → %.1f°F (pull %+.1f°F toward %.1f°F)",
+                        city_key, market_type, pre_climo, post_mean,
+                        climo_correction, climo_mean,
+                    )
+
+        # ── Step 7: EMOS spread calibration ──────────────────────────────────
+        if blended_std is not None:
+            # Base inflation from config
+            calibrated_std = emos_spread_calibration(
+                blended_std, config.EMOS_INFLATION_FACTOR
+            )
+            # Additional inflation from historical MAE (if available)
+            if bias_tracker is not None:
+                tracker_inflation = bias_tracker.get_spread_inflation(city_key, market_type)
+                if tracker_inflation > 1.0:
+                    calibrated_std = emos_spread_calibration(
+                        calibrated_std, tracker_inflation / config.EMOS_INFLATION_FACTOR
+                    )
+                    logger.debug(
+                        "%s %s EMOS: spread %.2f → %.2f (tracker inflation=%.2f)",
+                        city_key, market_type, blended_std, calibrated_std, tracker_inflation,
+                    )
+            blended_std = calibrated_std
+
+        # ── Step 8: Nowcasting bias correction (diurnal cycle physics) ───────
+        nowcast_correction = 0.0
         obs_temp = None
         cloud_cover = ""
 
@@ -331,15 +421,11 @@ class WeatherEngine:
                 obs_temp = metar_obs.get("temp_f")
                 cloud_cover = metar_obs.get("cloud_cover", "")
                 wind_kt = metar_obs.get("wind_kt", 0)
-                obs_time = metar_obs.get("obs_time")
 
                 if obs_temp is not None and nws_val is not None:
-                    # Get current local hour for diurnal model
                     local_now = datetime.now(tz=ZoneInfo(tz_name))
                     local_hour = local_now.hour + local_now.minute / 60.0
 
-                    # Use NWS min/max as the diurnal model's reference temps
-                    # (we need both min and max to model the cycle)
                     nws_data_dict = nws_data if isinstance(nws_data, dict) else {}
                     forecast_max = nws_data_dict.get("max_temp_f", blended_mean + 5)
                     forecast_min = nws_data_dict.get("min_temp_f", blended_mean - 5)
@@ -348,11 +434,8 @@ class WeatherEngine:
                         raw_bias = _compute_nowcast_bias(
                             obs_temp, forecast_min, forecast_max, local_hour
                         )
-
-                        # Scale by radiation physics confidence
                         rad_factor = _radiation_cooling_adjustment(cloud_cover, wind_kt)
 
-                        # Apply correction with configurable weight and cap
                         correction = (
                             raw_bias
                             * config.NOWCAST_CORRECTION_WEIGHT
@@ -364,7 +447,7 @@ class WeatherEngine:
                         )
 
                         if abs(correction) > 0.1:
-                            bias_correction = correction
+                            nowcast_correction = correction
                             logger.info(
                                 "%s %s nowcast: obs=%.1f°F expected=%.1f°F "
                                 "raw_bias=%+.1f°F correction=%+.1f°F "
@@ -375,12 +458,13 @@ class WeatherEngine:
                                 cloud_cover, wind_kt, rad_factor,
                             )
 
-        # ── Step 6: Apply bias correction to all members ─────────────────────
-        if bias_correction != 0.0 and member_values:
-            member_values = [v + bias_correction for v in member_values]
-            blended_mean += bias_correction
+        # ── Step 9: Apply all corrections ────────────────────────────────────
+        total_correction = mos_correction + climo_correction + nowcast_correction
+        if total_correction != 0.0 and member_values:
+            member_values = [v + total_correction for v in member_values]
+            blended_mean += total_correction
 
-        # ── Step 7: Build the distribution (KDE or Gaussian) ─────────────────
+        # ── Step 10: Build the distribution (KDE or Gaussian) ────────────────
         dist = TemperatureDistribution(
             city=city_key,
             mean=blended_mean,
@@ -389,12 +473,21 @@ class WeatherEngine:
             member_weights=member_weights,
             sources=sources,
             forecast_date=forecast_date,
-            bias_correction_f=bias_correction,
+            bias_correction_f=total_correction,
             cloud_cover=cloud_cover,
             observation_temp_f=obs_temp,
         )
 
         date_tag = forecast_date.isoformat() if forecast_date else "?"
+        corrections = []
+        if abs(mos_correction) > 0.05:
+            corrections.append(f"MOS={mos_correction:+.1f}")
+        if abs(climo_correction) > 0.05:
+            corrections.append(f"climo={climo_correction:+.1f}")
+        if abs(nowcast_correction) > 0.05:
+            corrections.append(f"nowcast={nowcast_correction:+.1f}")
+        correction_str = f" [{', '.join(corrections)}]" if corrections else ""
+
         logger.info(
             "%s %s [%s]: mean=%.1f°F ±%.1f°F (%d members, %s, confidence=%s%s)",
             city_key, market_type, date_tag,
@@ -402,7 +495,7 @@ class WeatherEngine:
             len(dist.member_values),
             dist.distribution_type,
             dist.confidence,
-            f", bias={bias_correction:+.1f}°F" if abs(bias_correction) > 0.1 else "",
+            correction_str,
         )
 
         return dist

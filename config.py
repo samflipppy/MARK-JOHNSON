@@ -54,6 +54,19 @@ MODEL_WEIGHTS = {
 }
 MODEL_WEIGHT_DEFAULT = 0.5  # for unknown model names
 
+# ── Climatological prior (Bayesian anchoring) ───────────────────────────────
+CLIMO_PRIOR_WEIGHT = 0.10  # precision weight for climo prior (0=off, 0.1=light, 0.5=heavy)
+CLIMO_ANOMALY_WARN_SIGMA = 2.5  # log warning if forecast departs >N sigma from climo
+
+# ── EMOS (ensemble spread calibration) ──────────────────────────────────────
+EMOS_INFLATION_FACTOR = 1.2  # multiply raw ensemble spread by this (>1 = inflate)
+EMOS_MAX_INFLATION = 2.0  # cap the inflation factor from bias tracker
+
+# ── MOS bias tracker ────────────────────────────────────────────────────────
+BIAS_TRACKER_ENABLED = True  # persist forecast-vs-actual bias per city/model
+BIAS_MIN_SAMPLES = 5  # minimum verifications before applying bias correction
+BIAS_MAX_CORRECTION_F = 3.0  # cap MOS correction at ±3°F
+
 # ── KDE (kernel density estimation) ─────────────────────────────────────────
 USE_KDE = True  # use KDE instead of Gaussian for probability estimates
 KDE_MIN_MEMBERS = 10  # below this, fallback to Gaussian

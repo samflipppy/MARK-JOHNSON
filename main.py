@@ -17,6 +17,7 @@ import aiohttp
 
 import config
 from services.alert_dispatcher import AlertDispatcher
+from services.bias_tracker import BiasTracker
 from services.logger import log_forecast, log_market_snapshot, log_signal
 from services.market_scanner import MarketScanner
 from services.signal_engine import SignalEngine
@@ -267,10 +268,11 @@ async def main() -> None:
         nws = NWSClient(session=session)
         metar = METARClient(session=session)
         discord = DiscordWebhookClient(session=session)
+        bias_tracker = BiasTracker() if config.BIAS_TRACKER_ENABLED else None
 
         # Initialize services
         scanner = MarketScanner(kalshi)
-        weather = WeatherEngine(openmeteo, nws, metar=metar)
+        weather = WeatherEngine(openmeteo, nws, metar=metar, bias_tracker=bias_tracker)
         signal_engine = SignalEngine()
         dispatcher = AlertDispatcher(discord)
 
